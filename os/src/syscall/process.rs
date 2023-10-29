@@ -1,10 +1,15 @@
 //! Process management syscalls
 use crate::{
     config::MAX_SYSCALL_NUM,
+    mm::{translated_byte_buffer, MapPermission, VPNRange, VirtAddr},
     task::{
-        change_program_brk, exit_current_and_run_next, suspend_current_and_run_next, TaskStatus,
+        change_program_brk, current_user_token, exit_current_and_run_next,
+        get_current_task_runtime, get_current_task_syscall_times, insert_framed_area,
+        remove_framed_area, suspend_current_and_run_next, translate, TaskStatus,
     },
+    timer::get_time_ms,
 };
+use core::mem::size_of;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -43,27 +48,96 @@ pub fn sys_yield() -> isize {
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
-    -1
+    let mut buffers =
+        translated_byte_buffer(current_user_token(), _ts as *const u8, size_of::<TimeVal>());
+    let time_val = unsafe { &mut *(buffers[0].as_mut_ptr() as *mut TimeVal) };
+    let ms = get_time_ms();
+
+    *time_val = TimeVal {
+        sec: ms / 1000,
+        usec: ms * 1000,
+    };
+    0
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-    trace!("kernel: sys_task_info NOT IMPLEMENTED YET!");
-    -1
+    trace!("kernel: sys_task_info");
+    let mut buffers = translated_byte_buffer(
+        current_user_token(),
+        _ti as *const u8,
+        size_of::<TaskInfo>(),
+    );
+    let task_info = unsafe { &mut *(buffers[0].as_mut_ptr() as *mut TaskInfo) };
+    *task_info = TaskInfo {
+        status: TaskStatus::Running,
+        syscall_times: get_current_task_syscall_times(),
+        time: get_current_task_runtime(),
+    };
+    0
 }
 
 // YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
-    -1
+    let start_va = VirtAddr::from(_start);
+    let end_va = VirtAddr::from(_start + _len);
+
+    if start_va.page_offset() != 0 || _port & 0x7 == 0 || _port & !0x7 != 0 {
+        return -1;
+    }
+
+    for vpn in VPNRange::new(start_va.floor(), end_va.ceil()) {
+        let pte = translate(vpn);
+        if pte.is_some() && pte.unwrap().is_valid() {
+            return -1;
+        }
+    }
+
+    if _len == 0 {
+        return 0;
+    }
+
+    let mut map_perm = MapPermission::U;
+
+    if _port & 0x1 != 0 {
+        map_perm |= MapPermission::R;
+    }
+
+    if _port & 0x2 != 0 {
+        map_perm |= MapPermission::W;
+    }
+
+    if _port & 0x4 != 0 {
+        map_perm |= MapPermission::X;
+    }
+
+    insert_framed_area(start_va, end_va, map_perm);
+    0
 }
 
 // YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
-    -1
+    trace!("kernel: sys_munmap");
+    let start_va: VirtAddr = _start.into();
+    let end_va: VirtAddr = (_start + _len).into();
+
+    // validity check
+    if start_va.page_offset() != 0 {
+        return -1;
+    }
+
+    for vpn in VPNRange::new(start_va.floor(), end_va.ceil()) {
+        let pte = translate(vpn);
+
+        if pte.is_none() || !pte.unwrap().is_valid() {
+            return -1;
+        }
+    }
+    remove_framed_area(start_va, end_va);
+    0
 }
 /// change data segment size
 pub fn sys_sbrk(size: i32) -> isize {

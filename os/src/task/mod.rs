@@ -14,7 +14,9 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::MAX_SYSCALL_NUM;
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{MapPermission, PageTableEntry, VirtAddr, VirtPageNum};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
@@ -71,6 +73,50 @@ lazy_static! {
 }
 
 impl TaskManager {
+    /// Get current task's runtime
+    fn get_current_task_runtime(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        let cur_task = inner.current_task;
+        inner.tasks[cur_task].calculate_task_runtime()
+    }
+    /// Update current task's syscall times
+    fn update_current_task_sycall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let cur_task = inner.current_task;
+        inner.tasks[cur_task].update_syscall_times(syscall_id)
+    }
+    /// Get current task's syscall times
+    fn get_current_task_syscall_times(&self) -> [u32; MAX_SYSCALL_NUM] {
+        let inner = self.inner.exclusive_access();
+        let cur_task = inner.current_task;
+        inner.tasks[cur_task].get_syscall_times()
+    }
+    /// Translate VirtPageNum to PageTableEntry
+    fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+
+        inner.tasks[current].translate(vpn)
+    }
+
+    /// Insert framed area
+    pub fn insert_framed_area(
+        &self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].insert_framed_area(start_va, end_va, permission);
+    }
+
+    /// Remove framed area
+    pub fn remove_framed_area(&self, start_va: VirtAddr, end_va: VirtAddr) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].remove_framed_area(start_va, end_va);
+    }
     /// Run the first task in task list.
     ///
     /// Generally, the first task in task list is an idle task (we call it zero process later).
@@ -80,6 +126,7 @@ impl TaskManager {
         let next_task = &mut inner.tasks[0];
         next_task.task_status = TaskStatus::Running;
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
+        next_task.record_first_launch_time();
         drop(inner);
         let mut _unused = TaskContext::zero_init();
         // before this, we should drop local variables that must be dropped manually
@@ -140,6 +187,7 @@ impl TaskManager {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
+            inner.tasks[next].record_first_launch_time();
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
@@ -201,4 +249,33 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Get current task's runtime
+pub fn get_current_task_runtime() -> usize {
+    TASK_MANAGER.get_current_task_runtime()
+}
+
+/// Update syscall time
+pub fn update_current_task_syscall_times(syscall_id: usize) {
+    TASK_MANAGER.update_current_task_sycall_times(syscall_id)
+}
+
+/// Get syscall times
+pub fn get_current_task_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
+    TASK_MANAGER.get_current_task_syscall_times()
+}
+
+/// Translate VirtPageNum to PageTableEntry
+pub fn translate(vpn: VirtPageNum) -> Option<PageTableEntry> {
+    TASK_MANAGER.translate(vpn)
+}
+
+/// Insert framed area
+pub fn insert_framed_area(start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) {
+    TASK_MANAGER.insert_framed_area(start_va, end_va, permission)
+}
+/// Remove framed area
+pub fn remove_framed_area(start_va: VirtAddr, end_va: VirtAddr) {
+    TASK_MANAGER.remove_framed_area(start_va, end_va)
 }
