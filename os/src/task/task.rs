@@ -1,9 +1,12 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
-use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
+use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
+use crate::mm::{
+    MapPermission, MemorySet, PageTableEntry, PhysPageNum, VirtAddr, VirtPageNum, KERNEL_SPACE,
+};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
@@ -68,9 +71,55 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// First lauch time
+    pub first_launch_time: Option<usize>,
+
+    /// Syscall times
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
 }
 
 impl TaskControlBlockInner {
+    /// Update syscall times.
+    pub fn update_syscall_times(&mut self, syscall_id: usize) {
+        self.syscall_times[syscall_id] += 1;
+    }
+    /// Get syscall times.
+    pub fn get_syscall_times(&self) -> [u32; MAX_SYSCALL_NUM] {
+        self.syscall_times
+    }
+    /// Record fist lauch time
+    pub fn record_first_lauch_time(&mut self) {
+        if self.first_launch_time == None {
+            self.first_launch_time = Some(get_time_ms());
+        }
+    }
+    /// Calculate task runtime.
+    pub fn calculate_task_runtime(&self) -> usize {
+        if let Some(time) = self.first_launch_time {
+            get_time_ms().checked_sub(time).unwrap()
+        } else {
+            0
+        }
+    }
+    /// Translate VirtPageNum to PageTableEntry
+    pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
+        self.memory_set.translate(vpn)
+    }
+    /// Insert framed area
+    pub fn insert_framed_area(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) {
+        self.memory_set
+            .insert_framed_area(start_va, end_va, permission)
+    }
+    /// Remove a area
+    pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
+        self.memory_set.remove_area_with_start_vpn(start_vpn)
+    }
     /// get the trap context
     pub fn get_trap_cx(&self) -> &'static mut TrapContext {
         self.trap_cx_ppn.get_mut()
@@ -118,6 +167,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    first_launch_time: None,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
                 })
             },
         };
@@ -191,6 +242,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    first_launch_time: None,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
                 })
             },
         });

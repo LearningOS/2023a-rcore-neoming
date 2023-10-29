@@ -5,10 +5,14 @@ use crate::{
     config::MAX_SYSCALL_NUM,
     loader::get_app_data_by_name,
     mm::{translated_refmut, translated_str},
+    mm::{MapPermission, VPNRange, VirtAddr},
     task::{
-        add_task, current_task, current_user_token, exit_current_and_run_next,
+        add_task, current_task, current_task_get_runtime, current_task_get_syscall_times,
+        current_task_insert_framed_area, current_task_remove_area_with_start_vpn,
+        current_task_translate, current_user_token, exit_current_and_run_next,
         suspend_current_and_run_next, TaskStatus,
     },
+    timer::get_time_ms,
 };
 
 #[repr(C)]
@@ -79,7 +83,11 @@ pub fn sys_exec(path: *const u8) -> isize {
 /// If there is not a child process whose pid is same as given, return -1.
 /// Else if there is a child process but it is still running, return -2.
 pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
-    trace!("kernel::pid[{}] sys_waitpid [{}]", current_task().unwrap().pid.0, pid);
+    trace!(
+        "kernel::pid[{}] sys_waitpid [{}]",
+        current_task().unwrap().pid.0,
+        pid
+    );
     let task = current_task().unwrap();
     // find a child process
 
@@ -118,11 +126,15 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel:pid[{}] sys_get_time", current_task().unwrap().pid.0);
+    let time_val = translated_refmut(current_user_token(), _ts);
+    let ms = get_time_ms();
+
+    *time_val = TimeVal {
+        sec: ms / 1000,
+        usec: ms * 1000,
+    };
+    0
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
@@ -130,28 +142,77 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
     trace!(
-        "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_task_info",
         current_task().unwrap().pid.0
     );
+    let task_info = translated_refmut(current_user_token(), _ti);
+    *task_info = TaskInfo {
+        status: TaskStatus::Running,
+        syscall_times: current_task_get_syscall_times(),
+        time: current_task_get_runtime(),
+    };
     -1
 }
 
 /// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
+    let start_va = VirtAddr::from(_start);
+    let end_va = VirtAddr::from(_start + _len);
+
+    if start_va.page_offset() != 0 || _port & 0x7 == 0 || _port & !0x7 != 0 {
+        return -1;
+    }
+
+    for vpn in VPNRange::new(start_va.floor(), end_va.ceil()) {
+        let pte = current_task_translate(vpn);
+        if pte.is_some() && pte.unwrap().is_valid() {
+            return -1;
+        }
+    }
+
+    if _len == 0 {
+        return 0;
+    }
+
+    let mut map_perm = MapPermission::U;
+
+    if _port & 0x1 != 0 {
+        map_perm |= MapPermission::R;
+    }
+
+    if _port & 0x2 != 0 {
+        map_perm |= MapPermission::W;
+    }
+
+    if _port & 0x4 != 0 {
+        map_perm |= MapPermission::X;
+    }
+
+    current_task_insert_framed_area(start_va, end_va, map_perm);
+    0
 }
 
 /// YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel:pid[{}] sys_munmap", current_task().unwrap().pid.0);
+    let start_va: VirtAddr = _start.into();
+    let end_va: VirtAddr = (_start + _len).into();
+
+    // validity check
+    if start_va.page_offset() != 0 {
+        return -1;
+    }
+
+    for vpn in VPNRange::new(start_va.floor(), end_va.ceil()) {
+        let pte = current_task_translate(vpn);
+
+        if pte.is_none() || !pte.unwrap().is_valid() {
+            return -1;
+        }
+    }
+    current_task_remove_area_with_start_vpn(start_va);
+    0
 }
 
 /// change data segment size

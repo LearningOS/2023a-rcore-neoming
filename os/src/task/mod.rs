@@ -21,7 +21,9 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::MAX_SYSCALL_NUM;
 use crate::loader::get_app_data_by_name;
+use crate::mm::{MapPermission, PageTableEntry, VirtAddr, VirtPageNum};
 use alloc::sync::Arc;
 use lazy_static::*;
 pub use manager::{fetch_task, TaskManager};
@@ -35,6 +37,47 @@ pub use processor::{
     current_task, current_trap_cx, current_user_token, run_tasks, schedule, take_current_task,
     Processor,
 };
+
+/// Translate VirtPageNum to PageTableEntry
+pub fn current_task_translate(vpn: VirtPageNum) -> Option<PageTableEntry> {
+    let task = take_current_task().unwrap();
+    let task_inner = task.inner_exclusive_access();
+    task_inner.translate(vpn)
+}
+/// Insert framed area
+pub fn current_task_insert_framed_area(
+    start_va: VirtAddr,
+    end_va: VirtAddr,
+    permission: MapPermission,
+) {
+    let task = take_current_task().unwrap();
+    let mut task_inner = task.inner_exclusive_access();
+    task_inner.insert_framed_area(start_va, end_va, permission);
+}
+/// Remove framed area
+pub fn current_task_remove_area_with_start_vpn(start_va: VirtAddr) {
+    let task = take_current_task().unwrap();
+    let mut task_inner = task.inner_exclusive_access();
+    task_inner.remove_area_with_start_vpn(start_va.floor());
+}
+/// Get current task's syscall times
+pub fn current_task_get_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
+    let task = take_current_task().unwrap();
+    let task_inner = task.inner_exclusive_access();
+    task_inner.get_syscall_times()
+}
+/// Update current task's syscall times
+pub fn current_task_update_sycall_times(syscall_id: usize) {
+    let task = take_current_task().unwrap();
+    let mut task_inner = task.inner_exclusive_access();
+    task_inner.update_syscall_times(syscall_id)
+}
+/// Get current task's runtime
+pub fn current_task_get_runtime() -> usize {
+    let task = take_current_task().unwrap();
+    let task_inner = task.inner_exclusive_access();
+    task_inner.calculate_task_runtime()
+}
 /// Suspend the current 'Running' task and run the next task in task list.
 pub fn suspend_current_and_run_next() {
     // There must be an application running.
