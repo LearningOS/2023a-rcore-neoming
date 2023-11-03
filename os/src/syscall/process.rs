@@ -53,7 +53,7 @@ pub fn sys_getpid() -> isize {
 }
 
 pub fn sys_fork() -> isize {
-    trace!("kernel:pid[{}] sys_fork", current_task().unwrap().pid.0);
+    trace!("kernel: sys_getpid pid:{}", current_task().unwrap().pid.0);
     let current_task = current_task().unwrap();
     let new_task = current_task.fork();
     let new_pid = new_task.pid.0;
@@ -156,7 +156,7 @@ pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
 
 /// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
+    trace!("kernel:pid[{}] sys_mmap", current_task().unwrap().pid.0);
     let start_va = VirtAddr::from(_start);
     let end_va = VirtAddr::from(_start + _len);
 
@@ -228,11 +228,19 @@ pub fn sys_sbrk(size: i32) -> isize {
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
 pub fn sys_spawn(_path: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel:pid[{}] sys_spawn", current_task().unwrap().pid.0);
+    let token = current_user_token();
+    let path = translated_str(token, _path);
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let current_task = current_task().unwrap();
+        let child_task = current_task.spawn(data);
+        let child_id = child_task.pid.0 as isize;
+        trace!("kernel:child pid[{}] spawn", child_id);
+        add_task(child_task);
+        child_id
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.

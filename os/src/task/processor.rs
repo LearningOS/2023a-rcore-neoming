@@ -7,6 +7,8 @@
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
+use crate::config::MAX_SYSCALL_NUM;
+use crate::mm::{MapPermission, PageTableEntry, VirtAddr, VirtPageNum};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
@@ -56,6 +58,7 @@ pub fn run_tasks() {
     loop {
         let mut processor = PROCESSOR.exclusive_access();
         if let Some(task) = fetch_task() {
+            trace!("Start run task, id {}", task.getpid());
             let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
             // access coming task TCB exclusively
             let mut task_inner = task.inner_exclusive_access();
@@ -87,6 +90,46 @@ pub fn current_task() -> Option<Arc<TaskControlBlock>> {
     PROCESSOR.exclusive_access().current()
 }
 
+/// Translate VirtPageNum to PageTableEntry
+pub fn current_task_translate(vpn: VirtPageNum) -> Option<PageTableEntry> {
+    let task = current_task().unwrap();
+    let task_inner = task.inner_exclusive_access();
+    task_inner.translate(vpn)
+}
+/// Insert framed area
+pub fn current_task_insert_framed_area(
+    start_va: VirtAddr,
+    end_va: VirtAddr,
+    permission: MapPermission,
+) {
+    let task = current_task().unwrap();
+    let mut task_inner = task.inner_exclusive_access();
+    task_inner.insert_framed_area(start_va, end_va, permission);
+}
+/// Remove framed area
+pub fn current_task_remove_area_with_start_vpn(start_va: VirtAddr) {
+    let task = current_task().unwrap();
+    let mut task_inner = task.inner_exclusive_access();
+    task_inner.remove_area_with_start_vpn(start_va.floor());
+}
+/// Get current task's syscall times
+pub fn current_task_get_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
+    let task = current_task().unwrap();
+    let task_inner = task.inner_exclusive_access();
+    task_inner.get_syscall_times()
+}
+/// Update current task's syscall times
+pub fn current_task_update_sycall_times(syscall_id: usize) {
+    let task = current_task().unwrap();
+    let mut task_inner = task.inner_exclusive_access();
+    task_inner.update_syscall_times(syscall_id)
+}
+/// Get current task's runtime
+pub fn current_task_get_runtime() -> usize {
+    let task = current_task().unwrap();
+    let task_inner = task.inner_exclusive_access();
+    task_inner.calculate_task_runtime()
+}
 /// Get the current user token(addr of page table)
 pub fn current_user_token() -> usize {
     let task = current_task().unwrap();

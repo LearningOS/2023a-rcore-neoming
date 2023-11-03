@@ -35,7 +35,7 @@ lazy_static! {
 
 /// Add process to ready queue
 pub fn add_task(task: Arc<TaskControlBlock>) {
-    //trace!("kernel: TaskManager::add_task");
+    //trace!("kernel: TaskManager::add_task {}", task.getpid());
     TASK_MANAGER.exclusive_access().add(task);
 }
 
