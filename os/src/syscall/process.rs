@@ -9,8 +9,8 @@ use crate::{
     task::{
         add_task, current_task, current_task_get_runtime, current_task_get_syscall_times,
         current_task_insert_framed_area, current_task_remove_area_with_start_vpn,
-        current_task_translate, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next, TaskStatus,
+        current_task_set_priority, current_task_translate, current_user_token,
+        exit_current_and_run_next, suspend_current_and_run_next, TaskStatus,
     },
     timer::get_time_ms,
 };
@@ -84,7 +84,7 @@ pub fn sys_exec(path: *const u8) -> isize {
 /// Else if there is a child process but it is still running, return -2.
 pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
     trace!(
-        "kernel::pid[{}] sys_waitpid [{}]",
+        "kernel:pid[{}] sys_waitpid [{}]",
         current_task().unwrap().pid.0,
         pid
     );
@@ -249,5 +249,9 @@ pub fn sys_set_priority(_prio: isize) -> isize {
         "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
+    if _prio >= 2 {
+        current_task_set_priority(_prio);
+        return _prio;
+    }
     -1
 }

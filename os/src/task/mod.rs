@@ -20,7 +20,7 @@ mod processor;
 mod switch;
 #[allow(clippy::module_inception)]
 mod task;
-
+use crate::config::MAX_TIME_SLICE;
 use crate::loader::get_app_data_by_name;
 use alloc::sync::Arc;
 use lazy_static::*;
@@ -34,10 +34,25 @@ pub use manager::add_task;
 pub use processor::{
     current_task, current_task_get_runtime, current_task_get_syscall_times,
     current_task_insert_framed_area, current_task_remove_area_with_start_vpn,
-    current_task_translate, current_task_update_sycall_times, current_trap_cx, current_user_token,
-    run_tasks, schedule, take_current_task, Processor,
+    current_task_set_priority, current_task_translate, current_task_update_sycall_times,
+    current_trap_cx, current_user_token, run_tasks, schedule, take_current_task, Processor,
 };
-
+/// Do Big Stride Schedule
+pub fn big_stride_schedule() {
+    let task = current_task().unwrap();
+    let mut task_inner = task.inner_exclusive_access();
+    if task_inner.time_slice == 0 {
+        debug!("kernel: task {} suspend", current_task().unwrap().getpid());
+        suspend_current_and_run_next();
+    } else {
+        debug!(
+            "kernel: task {} time slice {}",
+            task.getpid(),
+            task_inner.time_slice
+        );
+        task_inner.time_slice -= 1;
+    }
+}
 /// Suspend the current 'Running' task and run the next task in task list.
 pub fn suspend_current_and_run_next() {
     // There must be an application running.
@@ -48,6 +63,10 @@ pub fn suspend_current_and_run_next() {
     let task_cx_ptr = &mut task_inner.task_cx as *mut TaskContext;
     // Change status to Ready
     task_inner.task_status = TaskStatus::Ready;
+    // Change time_slice to max_time_slice
+    if task_inner.time_slice == 0 {
+        task_inner.time_slice = MAX_TIME_SLICE;
+    }
     drop(task_inner);
     // ---- release current PCB
 

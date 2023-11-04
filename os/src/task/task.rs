@@ -1,7 +1,7 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
+use crate::config::{BIG_STRIDE, MAX_SYSCALL_NUM, MAX_TIME_SLICE, TRAP_CONTEXT_BASE};
 use crate::mm::{
     MapPermission, MemorySet, PageTableEntry, PhysPageNum, VirtAddr, VirtPageNum, KERNEL_SPACE,
 };
@@ -77,9 +77,26 @@ pub struct TaskControlBlockInner {
 
     /// Syscall times
     pub syscall_times: [u32; MAX_SYSCALL_NUM],
+
+    /// Priority
+    pub priority: isize,
+
+    /// Stride
+    pub stride: usize,
+
+    /// TimeSlice
+    pub time_slice: usize,
 }
 
 impl TaskControlBlockInner {
+    /// Set priority
+    pub fn set_priority(&mut self, priority: isize) {
+        self.priority = priority;
+    }
+    /// Update stride
+    pub fn update_stride(&mut self) {
+        self.stride += BIG_STRIDE / self.priority as usize;
+    }
     /// Update syscall times.
     pub fn update_syscall_times(&mut self, syscall_id: usize) {
         self.syscall_times[syscall_id] += 1;
@@ -169,6 +186,9 @@ impl TaskControlBlock {
                     program_brk: user_sp,
                     first_launch_time: None,
                     syscall_times: [0; MAX_SYSCALL_NUM],
+                    priority: 16,
+                    stride: 0,
+                    time_slice: MAX_TIME_SLICE,
                 })
             },
         };
@@ -244,6 +264,9 @@ impl TaskControlBlock {
                     program_brk: parent_inner.program_brk,
                     first_launch_time: None,
                     syscall_times: [0; MAX_SYSCALL_NUM],
+                    priority: 16,
+                    stride: 0,
+                    time_slice: MAX_TIME_SLICE,
                 })
             },
         });
@@ -290,6 +313,9 @@ impl TaskControlBlock {
                     program_brk: user_sp,
                     first_launch_time: None,
                     syscall_times: [0; MAX_SYSCALL_NUM],
+                    priority: 16,
+                    stride: 0,
+                    time_slice: MAX_TIME_SLICE,
                 })
             },
         });

@@ -90,6 +90,12 @@ pub fn current_task() -> Option<Arc<TaskControlBlock>> {
     PROCESSOR.exclusive_access().current()
 }
 
+/// Set current task priority
+pub fn current_task_set_priority(_prio: isize) {
+    let task = current_task().unwrap();
+    let mut task_inner = task.inner_exclusive_access();
+    task_inner.set_priority(_prio);
+}
 /// Translate VirtPageNum to PageTableEntry
 pub fn current_task_translate(vpn: VirtPageNum) -> Option<PageTableEntry> {
     let task = current_task().unwrap();
